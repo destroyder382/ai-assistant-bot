@@ -1,3 +1,4 @@
 config.py
 histories.json
+bot.db
 __pycache__
