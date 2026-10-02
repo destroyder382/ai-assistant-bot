@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from config import TOKEN, GROQ_API_KEY, ADMIN_ID
 from openai import AsyncOpenAI
 from db import init_db, add_message, get_history, clear_history, get_stats
+from rag import load_chunks, find_best_chunks
 
 SYSTEM_PROMPT = {
     "role": "system",
@@ -20,6 +21,7 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 init_db()
+chunks = load_chunks()
 
 
 @dp.message(Command('start'))
@@ -62,8 +64,20 @@ async def cmd_stats(message: types.Message):
 @dp.message(F.text)
 async def handle_text(message: types.Message):
     user_id = message.from_user.id
+    found_chunks = find_best_chunks(message.text, chunks)
+    print(len(found_chunks), "фрагментов найдено")
+    user_text = message.text
+    if found_chunks:
+        context = "\n---\n".join(found_chunks)
+        user_text = (
+            "Фрагменты из документа:\n"
+            f"{context}\n\n"
+            "Если эти фрагменты относятся к вопросу, ответь по ним. "
+            "Если нет, ответь как обычно.\n\n"
+            f"Вопрос: {message.text}"
+        )
     messages = [SYSTEM_PROMPT] + get_history(user_id) + [
-        {'role': 'user', 'content': message.text}
+        {'role': 'user', 'content': user_text}
     ]
 
     try:
@@ -89,3 +103,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+    
