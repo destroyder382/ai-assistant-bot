@@ -4,8 +4,8 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from config import TOKEN, GROQ_API_KEY, ADMIN_ID
 from openai import AsyncOpenAI
-from db import init_db, add_message, get_history, clear_history, get_stats
-from rag import load_chunks, find_best_chunks
+from db import init_db, add_message, get_history, clear_history, get_stats, add_chunks, get_chunks, clear_chunks
+from rag import find_best_chunks, split_into_chunks
 
 SYSTEM_PROMPT = {
     "role": "system",
@@ -21,7 +21,6 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 init_db()
-chunks = load_chunks()
 
 
 @dp.message(Command('start'))
@@ -60,12 +59,41 @@ async def cmd_stats(message: types.Message):
 
     await message.answer('\n'.join(lines))
 
+@dp.message(F.document)
+async def handle_document(message: types.Message):
+    user_id = message.from_user.id
+    doc = message.document
 
+    if not doc.file_name.endswith('.txt'):
+        await message.answer('Можно загружать только текстовые файлы .txt')
+        return
+    if doc.file_size > 1_000_000:
+        await message.answer('Файл слишком большой, максимум 1 МБ')
+        return
+
+    file = await bot.download(doc)
+    try:
+        text = file.read().decode('utf-8')
+    except UnicodeDecodeError:
+        await message.answer('Не удалось прочитать файл, сохрани его в кодировке UTF-8')
+        return
+    
+    if not text.strip():
+        await message.answer('Файл пустой')
+        return
+        
+
+    doc_chunks = split_into_chunks(text)
+    clear_chunks(user_id)
+    add_chunks(user_id, doc.file_name, doc_chunks)
+    await message.answer(f'Файл загружен. Получилось {len(doc_chunks)} фрагментов.')
+   
+    
 @dp.message(F.text)
 async def handle_text(message: types.Message):
     user_id = message.from_user.id
-    found_chunks = find_best_chunks(message.text, chunks)
-    print(len(found_chunks), "фрагментов найдено")
+    user_chunks = get_chunks(user_id)
+    found_chunks = find_best_chunks(message.text, user_chunks)
     user_text = message.text
     if found_chunks:
         context = "\n---\n".join(found_chunks)
@@ -79,7 +107,7 @@ async def handle_text(message: types.Message):
     messages = [SYSTEM_PROMPT] + get_history(user_id) + [
         {'role': 'user', 'content': user_text}
     ]
-
+            
     try:
         response = await client.chat.completions.create(
             model='openai/gpt-oss-120b',

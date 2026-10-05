@@ -23,8 +23,19 @@ def init_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
-        )
+)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user ON messages(user_id)")
+        conn.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                doc_name TEXT NOT NULL,
+                content TEXT NOT NULL
+            )
+            '''
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_user ON chunks(user_id)")
 
 
 def add_message(user_id, role, content):
@@ -33,7 +44,23 @@ def add_message(user_id, role, content):
             "INSERT INTO messages (user_id, role, content) VALUES (?, ?, ?)",
             (user_id, role, content),
         )
-
+        
+def add_chunks(user_id, doc_name, chunks):
+    rows = [(user_id, doc_name, content) for content in chunks]
+    with get_connection() as conn:
+        conn.executemany(
+            "INSERT INTO chunks (user_id, doc_name, content) VALUES (?, ?, ?)",
+            rows,
+        )
+        
+def get_chunks(user_id):
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT content FROM chunks WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+    return [row[0] for row in rows]
+        
 
 def get_history(user_id, limit=20):
     """Последние limit сообщений в формате, который принимает LLM API."""
@@ -46,6 +73,13 @@ def get_history(user_id, limit=20):
     return [{"role": role, "content": content} for role, content in reversed(rows)]
 
 
+def clear_chunks(user_id):
+    with get_connection() as conn:
+        conn.execute(
+            "DELETE FROM chunks WHERE user_id = ?",
+            (user_id,),
+        )
+        
 def clear_history(user_id):
     with get_connection() as conn:
         conn.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
@@ -77,3 +111,4 @@ def get_stats():
 ).fetchone()[0]
 
     return users, questions, by_day, top_users, avg_length
+
